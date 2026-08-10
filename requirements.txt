@@ -1,0 +1,8 @@
+# LaunchCast NBA — PINNED (== not >=) to prevent the Streamlit Cloud version
+# crash we hit on MLB (unpinned deps + forced Python 3.14 → GZipResponder crash).
+streamlit==1.44.0
+pandas==2.2.3
+numpy==1.26.4
+scipy==1.13.1
+nba_api==1.7.0
+requests==2.32.3
