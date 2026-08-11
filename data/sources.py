@@ -117,31 +117,45 @@ def balldontlie_key_present() -> bool:
 
 
 def fetch_balldontlie(path: str, params: dict | None = None, retries: int = 2):
-    """PRIMARY source: balldontlie API (core box-score stats, cloud-friendly,
-    reliable — unlike stats.nba.com which times out from datacenter IPs).
-    Requires a free API key in secrets as balldontlie_key. Returns JSON or None,
-    recording the reason in LAST_ERRORS on failure so nothing fails silently."""
+    """PRIMARY source: balldontlie API. Tries MULTIPLE auth header formats (raw
+    key, then 'Bearer <key>') because balldontlie's expected format has varied.
+    Records a DETAILED reason on failure — including key length + exact status —
+    so a persistent 401 is fully diagnosable (without ever logging the key itself)."""
     import requests
     key = _balldontlie_key()
-    headers = {"Authorization": key} if key else {}
     url = f"https://api.balldontlie.io/v1/{path.lstrip('/')}"
+    if not key:
+        LAST_ERRORS[f"balldontlie:{path}"] = "no key found in secrets"
+        return None
+    # auth formats to try, in order
+    auth_variants = [
+        {"Authorization": key},
+        {"Authorization": f"Bearer {key}"},
+    ]
     last = None
-    for attempt in range(retries):
-        try:
-            _throttle()
-            r = requests.get(url, params=params or {}, headers=headers, timeout=15)
-            if r.status_code == 200:
-                LAST_ERRORS.pop(f"balldontlie:{path}", None)
-                return r.json()
-            if r.status_code == 401:
-                last = "401 — missing/invalid balldontlie_key (get a free key at balldontlie.io, add to secrets)"
-                break  # no point retrying an auth failure
-            last = f"HTTP {r.status_code}"
-        except Exception as e:
-            last = f"{type(e).__name__}: {str(e)[:120]}"
-            if attempt < retries - 1:
-                time.sleep(0.8 * (attempt + 1))
-            continue
+    for headers in auth_variants:
+        for attempt in range(retries):
+            try:
+                _throttle()
+                r = requests.get(url, params=params or {}, headers=headers, timeout=15)
+                if r.status_code == 200:
+                    LAST_ERRORS.pop(f"balldontlie:{path}", None)
+                    return r.json()
+                # capture exact status + key length (NOT the key) for diagnosis
+                body = ""
+                try:
+                    body = r.text[:120]
+                except Exception:
+                    pass
+                last = (f"HTTP {r.status_code} (keylen={len(key)}, "
+                        f"auth='{list(headers.values())[0][:8]}...', body={body})")
+                if r.status_code == 401:
+                    break  # try the next auth format
+            except Exception as e:
+                last = f"{type(e).__name__}: {str(e)[:100]}"
+                if attempt < retries - 1:
+                    time.sleep(0.8 * (attempt + 1))
+                continue
     LAST_ERRORS[f"balldontlie:{path}"] = last or "unknown"
     return None
 
