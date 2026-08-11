@@ -160,3 +160,24 @@ def assemble_full_picture(season: str | None = None) -> dict:
         for k, v in picture.items() if k not in ("season", "health", "fetched_ok")
     }
     return picture
+
+
+def fetch_essential(season: str | None = None) -> dict:
+    """FAST minimal fetch: just player offense + team opponent-allowed, for the
+    given (or last completed) season. This is what the app calls FIRST — enough
+    to project all stats two-sided, without the 7-endpoint hang that was getting
+    the app killed by Streamlit Cloud. Extra endpoints load on demand later.
+    """
+    if season is None:
+        season = last_completed_season()
+    picture = {
+        "season": season,
+        "offense": fetch_player_offense(season),
+        "team_opponent": fetch_team_opponent(season),
+    }
+    picture["fetched_ok"] = {
+        k: (v is not None and getattr(v, "empty", True) is False)
+        for k, v in picture.items() if k not in ("season", "fetched_ok")
+    }
+    picture["fetch_errors"] = dict(getattr(sources, "LAST_ERRORS", {}))
+    return picture
