@@ -77,7 +77,7 @@ def fetch_nba_endpoint(endpoint_cls_name: str, retries: int = 1, **kwargs):
     for attempt in range(retries):
         try:
             _throttle()
-            kwargs.setdefault("timeout", 12)
+            kwargs.setdefault("timeout", 20)
             obj = cls(**kwargs)
             frames = obj.get_data_frames()
             if frames and len(frames) > 0 and not frames[0].empty:
@@ -95,21 +95,43 @@ def fetch_nba_endpoint(endpoint_cls_name: str, retries: int = 1, **kwargs):
     return None
 
 
+def _balldontlie_key():
+    """Free API key from Streamlit secrets (balldontlie added required auth in 2024).
+    Get one free at balldontlie.io. Returns '' if not set."""
+    try:
+        import streamlit as st
+        return st.secrets.get("balldontlie_key", "")
+    except Exception:
+        return ""
+
+
 def fetch_balldontlie(path: str, params: dict | None = None, retries: int = 2):
-    """Backup source: balldontlie free API (core box-score stats, reliable uptime).
-    Returns parsed JSON dict or None. Used when nba_api is blocked/rate-limited."""
+    """PRIMARY source: balldontlie API (core box-score stats, cloud-friendly,
+    reliable — unlike stats.nba.com which times out from datacenter IPs).
+    Requires a free API key in secrets as balldontlie_key. Returns JSON or None,
+    recording the reason in LAST_ERRORS on failure so nothing fails silently."""
     import requests
+    key = _balldontlie_key()
+    headers = {"Authorization": key} if key else {}
     url = f"https://api.balldontlie.io/v1/{path.lstrip('/')}"
+    last = None
     for attempt in range(retries):
         try:
             _throttle()
-            r = requests.get(url, params=params or {}, timeout=20)
+            r = requests.get(url, params=params or {}, headers=headers, timeout=15)
             if r.status_code == 200:
+                LAST_ERRORS.pop(f"balldontlie:{path}", None)
                 return r.json()
-        except Exception:
+            if r.status_code == 401:
+                last = "401 — missing/invalid balldontlie_key (get a free key at balldontlie.io, add to secrets)"
+                break  # no point retrying an auth failure
+            last = f"HTTP {r.status_code}"
+        except Exception as e:
+            last = f"{type(e).__name__}: {str(e)[:120]}"
             if attempt < retries - 1:
-                time.sleep(1.0 * (attempt + 1))
+                time.sleep(0.8 * (attempt + 1))
             continue
+    LAST_ERRORS[f"balldontlie:{path}"] = last or "unknown"
     return None
 
 
