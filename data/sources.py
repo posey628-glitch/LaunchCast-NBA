@@ -167,6 +167,7 @@ def source_health() -> dict:
     health = {}
     health["nba_api_installed"] = nba_api_available()
     health["balldontlie_key_found"] = balldontlie_key_present()
+    health["apinba_key_found"] = apinba_key_present()
     # a light reachability probe (won't work in the blocked container, works on Cloud)
     try:
         import requests
@@ -184,3 +185,71 @@ def source_health() -> dict:
     if LAST_ERRORS:
         health["recent_fetch_errors"] = dict(LAST_ERRORS)
     return health
+
+
+# ── API-NBA (api-sports.io) — cloud-friendly source with FREE player stats ────
+# Works from Streamlit Cloud (unlike stats.nba.com which times out, and unlike
+# balldontlie free which gates stats). Free tier = 100 req/day, includes player +
+# team statistics. Auth supports BOTH signup paths:
+#   - direct api-sports.io:  header x-apisports-key
+#   - via RapidAPI:          headers x-rapidapi-key + x-rapidapi-host
+def _apinba_key():
+    try:
+        import streamlit as st
+        for name in ("apinba_key", "api_nba_key", "apisports_key", "rapidapi_key"):
+            v = st.secrets.get(name, "")
+            if v:
+                return str(v).strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return ""
+
+
+def apinba_key_present() -> bool:
+    return bool(_apinba_key())
+
+
+def fetch_apinba(path: str, params: dict | None = None, retries: int = 2):
+    """Fetch from API-NBA (api-sports.io). Tries the direct api-sports.io host
+    first, then the RapidAPI host, so either signup style works. Returns the
+    parsed 'response' list (API-NBA wraps data in {'response': [...]}), or None.
+    Records failures in LAST_ERRORS."""
+    import requests
+    key = _apinba_key()
+    if not key:
+        LAST_ERRORS[f"apinba:{path}"] = "no key found (add apinba_key to secrets)"
+        return None
+    p = path.lstrip("/")
+    attempts = [
+        (f"https://v2.nba.api-sports.io/{p}", {"x-apisports-key": key}),
+        (f"https://api-nba-v1.p.rapidapi.com/{p}",
+         {"x-rapidapi-key": key, "x-rapidapi-host": "api-nba-v1.p.rapidapi.com"}),
+    ]
+    last = None
+    for url, headers in attempts:
+        for attempt in range(retries):
+            try:
+                _throttle()
+                r = requests.get(url, params=params or {}, headers=headers, timeout=20)
+                if r.status_code == 200:
+                    data = r.json()
+                    if isinstance(data, dict) and "response" in data:
+                        LAST_ERRORS.pop(f"apinba:{path}", None)
+                        return data["response"]
+                    last = "200 but no 'response' field"
+                else:
+                    body = ""
+                    try:
+                        body = r.text[:100]
+                    except Exception:
+                        pass
+                    last = f"HTTP {r.status_code} @ {url.split('/')[2]} (body={body})"
+                    if r.status_code in (401, 403):
+                        break
+            except Exception as e:
+                last = f"{type(e).__name__}: {str(e)[:100]}"
+                if attempt < retries - 1:
+                    time.sleep(0.8 * (attempt + 1))
+                continue
+    LAST_ERRORS[f"apinba:{path}"] = last or "unknown"
+    return None
