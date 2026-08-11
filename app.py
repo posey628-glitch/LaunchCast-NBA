@@ -39,8 +39,13 @@ st.write(f"Season: **{season}**")
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _cached_essential(season_key: str):
-    """Cached so we fetch ONCE per hour, not on every rerun (which was hammering
-    the API + hanging the app). Fast: only 2 endpoints, short timeouts."""
+    """Reads the gist cached by the GitHub Action FIRST (reliable — nba.com data
+    fetched from GitHub's IPs). Falls back to a direct fetch only if the gist
+    isn't set up yet. Cached hourly so we never hammer anything."""
+    gist_pic = fetcher.fetch_from_gist()
+    if gist_pic and gist_pic.get("offense") is not None:
+        return gist_pic
+    # gist not configured / empty → try direct (may be slow/blocked)
     return fetcher.fetch_essential(season_key)
 
 
