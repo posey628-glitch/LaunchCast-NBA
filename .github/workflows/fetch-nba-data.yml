@@ -1,0 +1,27 @@
+name: Fetch NBA data to gist
+
+# Runs on GitHub's IPs (not Streamlit Cloud's), so stats.nba.com responds.
+# Caches the data to a gist that the app reads. Same pattern as the MLB app.
+on:
+  schedule:
+    # Once daily at 11:00 UTC (during season this keeps data fresh; off-season
+    # it just re-caches last completed season, harmless).
+    - cron: "0 11 * * *"
+  workflow_dispatch:   # lets you run it manually from the Actions tab
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10   # generous — Actions has no app-restart limit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install nba_api==1.7.0 requests==2.32.3
+      - name: Fetch NBA data and write to gist
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+        run: python scripts/fetch_to_gist.py
