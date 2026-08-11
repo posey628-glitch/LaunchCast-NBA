@@ -47,7 +47,15 @@ if st.button("Fetch league data (offense + defense)"):
     if got:
         st.success(f"Fetched: {', '.join(got)}")
     if missing:
-        st.warning(f"Unavailable (source blocked/rate-limited): {', '.join(missing)}")
+        st.warning(f"Unavailable: {', '.join(missing)}")
+    # show the REAL reason each missing fetch failed (no more silent 'unavailable')
+    ferr = picture.get("fetch_errors") or {}
+    if ferr:
+        with st.expander("Why did some fetches fail? (real errors)", expanded=True):
+            for ep, msg in ferr.items():
+                st.text(f"{ep}: {msg}")
+    if picture.get("season_note"):
+        st.info(picture["season_note"])
 
 picture = st.session_state.get("_picture")
 if picture and picture.get("offense") is not None:
