@@ -318,3 +318,66 @@ def fetch_from_gist() -> dict:
         return picture
     except Exception as e:
         return {"_error": f"{type(e).__name__}: {e}"}
+
+
+# ── API-NBA offense fetch (the working cloud-friendly source) ─────────────────
+def fetch_offense_apinba(season_year: int | None = None, team_ids=None):
+    """Pull per-player season averages from API-NBA by looping teams (fits the
+    free 100/day budget: ~30 calls). Aggregates per-game rows into averages and
+    shapes them like the projection engine expects. Returns DataFrame|None."""
+    import pandas as pd
+    from collections import defaultdict
+    if season_year is None:
+        season_year = int(last_completed_season()[:4])
+    # get team list if not provided (1 call)
+    if team_ids is None:
+        teams = sources.fetch_apinba("teams", params={"league": "standard"}) or []
+        team_ids = [t.get("id") for t in teams
+                    if t.get("nbaFranchise") and not t.get("allStar")]
+    agg = defaultdict(lambda: {"n": 0, "PTS": 0.0, "REB": 0.0, "AST": 0.0,
+                               "FG3M": 0.0, "STL": 0.0, "BLK": 0.0, "TOV": 0.0,
+                               "MIN": 0.0, "NAME": None, "TEAM_ID": None})
+    for tid in team_ids:
+        rows = sources.fetch_apinba("players/statistics",
+                                    params={"team": tid, "season": season_year})
+        if not rows:
+            continue
+        for d in rows:
+            p = d.get("player") or {}
+            pid = p.get("id")
+            if pid is None:
+                continue
+            a = agg[pid]
+            a["n"] += 1
+            a["PTS"] += _num(d.get("points"))
+            a["REB"] += _num(d.get("totReb"))
+            a["AST"] += _num(d.get("assists"))
+            a["FG3M"] += _num(d.get("tpm"))
+            a["STL"] += _num(d.get("steals"))
+            a["BLK"] += _num(d.get("blocks"))
+            a["TOV"] += _num(d.get("turnovers"))
+            a["MIN"] += _min_to_float(d.get("min"))
+            if a["NAME"] is None:
+                a["NAME"] = f"{p.get('firstname','')} {p.get('lastname','')}".strip()
+            if a["TEAM_ID"] is None:
+                a["TEAM_ID"] = (d.get("team") or {}).get("id")
+    rows_out = []
+    for pid, a in agg.items():
+        n = max(1, a["n"])
+        rows_out.append({
+            "PLAYER_ID": pid, "PLAYER_NAME": a["NAME"], "TEAM_ID": a["TEAM_ID"],
+            "GP": a["n"], "MIN": round(a["MIN"]/n, 1), "PTS": round(a["PTS"]/n, 1),
+            "REB": round(a["REB"]/n, 1), "AST": round(a["AST"]/n, 1),
+            "FG3M": round(a["FG3M"]/n, 1), "STL": round(a["STL"]/n, 1),
+            "BLK": round(a["BLK"]/n, 1), "TOV": round(a["TOV"]/n, 1),
+        })
+    if not rows_out:
+        return None
+    return pd.DataFrame(rows_out)
+
+
+def _num(v):
+    try:
+        return float(v) if v is not None else 0.0
+    except Exception:
+        return 0.0
