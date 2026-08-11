@@ -50,9 +50,15 @@ def nba_api_available() -> bool:
         return False
 
 
+# Last fetch errors, surfaced in the health panel so failures are VISIBLE, not
+# silent (the MLB lesson: a silent None is worse than a loud error).
+LAST_ERRORS: dict = {}
+
+
 def fetch_nba_endpoint(endpoint_cls_name: str, retries: int = 3, **kwargs):
     """Generic throttled+retried fetch of any nba_api stats endpoint by name.
-    Returns the first DataFrame, or None on failure (so callers fall back).
+    Returns the first DataFrame, or None on failure. On failure, records WHY in
+    LAST_ERRORS[endpoint_cls_name] so the app can show the real cause.
 
     Example: fetch_nba_endpoint("LeagueDashPlayerStats", season="2024-25")
     """
@@ -61,24 +67,31 @@ def fetch_nba_endpoint(endpoint_cls_name: str, retries: int = 3, **kwargs):
         ep_mod = importlib.import_module("nba_api.stats.endpoints")
         cls = getattr(ep_mod, endpoint_cls_name, None)
         if cls is None:
+            LAST_ERRORS[endpoint_cls_name] = f"endpoint class '{endpoint_cls_name}' not found in nba_api"
             return None
-    except Exception:
+    except Exception as e:
+        LAST_ERRORS[endpoint_cls_name] = f"import error: {type(e).__name__}: {e}"
         return None
 
+    last_err = None
     for attempt in range(retries):
         try:
             _throttle()
             kwargs.setdefault("timeout", 30)
             obj = cls(**kwargs)
             frames = obj.get_data_frames()
-            if frames and len(frames) > 0:
+            if frames and len(frames) > 0 and not frames[0].empty:
+                LAST_ERRORS.pop(endpoint_cls_name, None)  # clear on success
                 return frames[0]
+            # got a response but it was EMPTY — record that distinctly
+            last_err = "returned empty (no rows — season may not have started, or params too narrow)"
             return None
-        except Exception:
-            # exponential backoff before retry — handles transient rate limits
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {str(e)[:200]}"
             if attempt < retries - 1:
                 time.sleep(1.5 * (attempt + 1))
             continue
+    LAST_ERRORS[endpoint_cls_name] = last_err or "unknown failure"
     return None
 
 
@@ -118,4 +131,7 @@ def source_health() -> dict:
         health["balldontlie_reachable"] = r.status_code in (200, 401)  # 401 = up but needs key
     except Exception:
         health["balldontlie_reachable"] = False
+    # surface any recorded fetch errors so failures are diagnosable, not silent
+    if LAST_ERRORS:
+        health["recent_fetch_errors"] = dict(LAST_ERRORS)
     return health
