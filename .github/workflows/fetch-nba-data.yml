@@ -19,9 +19,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install deps
-        run: pip install nba_api==1.7.0 requests==2.32.3
+        run: pip install requests==2.32.3
       - name: Fetch NBA data and write to gist
         env:
+          APINBA_KEY: ${{ secrets.APINBA_KEY }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
         run: python scripts/fetch_to_gist.py
