@@ -30,7 +30,7 @@ NBA_HEADERS = {
 }
 
 # Throttle: minimum seconds between stats.nba.com calls (avoid rate-limit blocks).
-_MIN_INTERVAL = 0.6
+_MIN_INTERVAL = 0.4
 _last_call = {"t": 0.0}
 
 
@@ -55,7 +55,7 @@ def nba_api_available() -> bool:
 LAST_ERRORS: dict = {}
 
 
-def fetch_nba_endpoint(endpoint_cls_name: str, retries: int = 3, **kwargs):
+def fetch_nba_endpoint(endpoint_cls_name: str, retries: int = 1, **kwargs):
     """Generic throttled+retried fetch of any nba_api stats endpoint by name.
     Returns the first DataFrame, or None on failure. On failure, records WHY in
     LAST_ERRORS[endpoint_cls_name] so the app can show the real cause.
@@ -77,7 +77,7 @@ def fetch_nba_endpoint(endpoint_cls_name: str, retries: int = 3, **kwargs):
     for attempt in range(retries):
         try:
             _throttle()
-            kwargs.setdefault("timeout", 30)
+            kwargs.setdefault("timeout", 12)
             obj = cls(**kwargs)
             frames = obj.get_data_frames()
             if frames and len(frames) > 0 and not frames[0].empty:
@@ -89,7 +89,7 @@ def fetch_nba_endpoint(endpoint_cls_name: str, retries: int = 3, **kwargs):
         except Exception as e:
             last_err = f"{type(e).__name__}: {str(e)[:200]}"
             if attempt < retries - 1:
-                time.sleep(1.5 * (attempt + 1))
+                time.sleep(0.8 * (attempt + 1))
             continue
     LAST_ERRORS[endpoint_cls_name] = last_err or "unknown failure"
     return None
