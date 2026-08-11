@@ -96,13 +96,24 @@ def fetch_nba_endpoint(endpoint_cls_name: str, retries: int = 1, **kwargs):
 
 
 def _balldontlie_key():
-    """Free API key from Streamlit secrets (balldontlie added required auth in 2024).
-    Get one free at balldontlie.io. Returns '' if not set."""
+    """Free API key from Streamlit secrets. Robust to the exact secret name —
+    checks several common spellings and strips stray whitespace/quotes, since a
+    tiny name/format mismatch was causing 401s. Returns '' if genuinely not set."""
     try:
         import streamlit as st
-        return st.secrets.get("balldontlie_key", "")
+        for name in ("balldontlie_key", "BALLDONTLIE_KEY", "balldontlie_api_key",
+                     "balldontlieKey", "bdl_key"):
+            v = st.secrets.get(name, "")
+            if v:
+                return str(v).strip().strip('"').strip("'")
     except Exception:
-        return ""
+        pass
+    return ""
+
+
+def balldontlie_key_present() -> bool:
+    """For the health panel: is a key actually being read? (diagnoses 401s.)"""
+    return bool(_balldontlie_key())
 
 
 def fetch_balldontlie(path: str, params: dict | None = None, retries: int = 2):
@@ -140,6 +151,7 @@ def source_health() -> dict:
     failures are visible (the MLB pipeline-health lesson: never fail silently)."""
     health = {}
     health["nba_api_installed"] = nba_api_available()
+    health["balldontlie_key_found"] = balldontlie_key_present()
     # a light reachability probe (won't work in the blocked container, works on Cloud)
     try:
         import requests
