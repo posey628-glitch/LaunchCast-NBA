@@ -37,25 +37,42 @@ st.markdown("### Slate projections")
 season = fetcher.current_season()
 st.write(f"Season: **{season}**")
 
-if st.button("Fetch league data (offense + defense)"):
-    with st.spinner("Pulling comprehensive data (throttled)…"):
-        picture = fetcher.assemble_full_picture(season)
-    st.session_state["_picture"] = picture
-    ok = picture.get("fetched_ok", {})
-    got = [k for k, v in ok.items() if v]
-    missing = [k for k, v in ok.items() if not v]
-    if got:
-        st.success(f"Fetched: {', '.join(got)}")
-    if missing:
-        st.warning(f"Unavailable: {', '.join(missing)}")
-    # show the REAL reason each missing fetch failed (no more silent 'unavailable')
-    ferr = picture.get("fetch_errors") or {}
-    if ferr:
-        with st.expander("Why did some fetches fail? (real errors)", expanded=True):
-            for ep, msg in ferr.items():
-                st.text(f"{ep}: {msg}")
-    if picture.get("season_note"):
-        st.info(picture["season_note"])
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_essential(season_key: str):
+    """Cached so we fetch ONCE per hour, not on every rerun (which was hammering
+    the API + hanging the app). Fast: only 2 endpoints, short timeouts."""
+    return fetcher.fetch_essential(season_key)
+
+
+col1, col2 = st.columns([1, 1])
+with col1:
+    do_fetch = st.button("Fetch league data (fast)")
+with col2:
+    if st.button("Clear cache / retry"):
+        _cached_essential.clear()
+        st.session_state.pop("_picture", None)
+
+if do_fetch:
+    with st.spinner("Pulling player + defense data (fast, cached)…"):
+        try:
+            picture = _cached_essential(fetcher.last_completed_season())
+            st.session_state["_picture"] = picture
+        except Exception as e:
+            st.error(f"Fetch failed: {type(e).__name__}: {e}")
+            picture = None
+    if picture:
+        ok = picture.get("fetched_ok", {})
+        got = [k for k, v in ok.items() if v]
+        missing = [k for k, v in ok.items() if not v]
+        if got:
+            st.success(f"Fetched: {', '.join(got)} (season {picture.get('season')})")
+        if missing:
+            st.warning(f"Unavailable: {', '.join(missing)}")
+        ferr = picture.get("fetch_errors") or {}
+        if ferr:
+            with st.expander("Why did some fetches fail? (real errors)", expanded=True):
+                for ep, msg in ferr.items():
+                    st.text(f"{ep}: {msg}")
 
 picture = st.session_state.get("_picture")
 if picture and picture.get("offense") is not None:
