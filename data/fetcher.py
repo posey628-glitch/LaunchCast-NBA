@@ -164,43 +164,61 @@ def assemble_full_picture(season: str | None = None) -> dict:
 
 # ── balldontlie primary path (reliable from cloud) ───────────────────────────
 def fetch_offense_balldontlie(season_year: int | None = None):
-    """Pull per-player season averages from balldontlie and shape them like the
-    nba_api offense frame (so matchup.py works unchanged). Returns DataFrame|None.
-
-    balldontlie season is an int (e.g. 2024 = 2024-25 season)."""
+    """FREE-TIER friendly: pull a sample of per-game /stats rows and aggregate
+    to per-player averages. season_averages is a PAID endpoint, so we use /stats
+    (free) instead. Capped hard (few pages) so it's fast + within the 5/min free
+    rate limit — this PROVES the pipeline; full-season aggregation waits for the
+    season to actually start.
+    """
     import pandas as pd
+    from collections import defaultdict
     if season_year is None:
-        # last completed season as an int
-        s = last_completed_season()  # "2024-25"
+        s = last_completed_season()
         season_year = int(s[:4])
-    # balldontlie: /season_averages needs player ids; but /stats gives per-game.
-    # Simplest reliable pull: season_averages for the season (paginated players).
-    # We page through active players' averages.
-    rows = []
+    agg = defaultdict(lambda: {"n": 0, "PTS": 0.0, "REB": 0.0, "AST": 0.0,
+                               "FG3M": 0.0, "STL": 0.0, "BLK": 0.0, "TOV": 0.0,
+                               "MIN": 0.0, "NAME": None})
     cursor = None
     pages = 0
-    while pages < 25:  # cap pages so we never hang
-        params = {"season": season_year, "per_page": 100}
+    while pages < 4:  # HARD cap — just enough rows to prove it works
+        params = {"seasons[]": season_year, "per_page": 100}
         if cursor:
             params["cursor"] = cursor
-        data = sources.fetch_balldontlie("season_averages", params=params)
+        data = sources.fetch_balldontlie("stats", params=params)
         if not data or "data" not in data:
             break
         for d in data["data"]:
-            rows.append({
-                "PLAYER_ID": d.get("player_id"),
-                "PLAYER_NAME": None,  # filled via a players lookup if needed
-                "GP": d.get("games_played", 0),
-                "MIN": _min_to_float(d.get("min")),
-                "PTS": d.get("pts", 0), "REB": d.get("reb", 0), "AST": d.get("ast", 0),
-                "FG3M": d.get("fg3m", 0), "STL": d.get("stl", 0),
-                "BLK": d.get("blk", 0), "TOV": d.get("turnover", 0),
-            })
+            p = d.get("player") or {}
+            pid = p.get("id")
+            if pid is None:
+                continue
+            a = agg[pid]
+            a["n"] += 1
+            a["PTS"] += d.get("pts", 0) or 0
+            a["REB"] += d.get("reb", 0) or 0
+            a["AST"] += d.get("ast", 0) or 0
+            a["FG3M"] += d.get("fg3m", 0) or 0
+            a["STL"] += d.get("stl", 0) or 0
+            a["BLK"] += d.get("blk", 0) or 0
+            a["TOV"] += d.get("turnover", 0) or 0
+            a["MIN"] += _min_to_float(d.get("min"))
+            if a["NAME"] is None:
+                a["NAME"] = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
         meta = data.get("meta") or {}
         cursor = meta.get("next_cursor")
         pages += 1
         if not cursor:
             break
+    rows = []
+    for pid, a in agg.items():
+        n = max(1, a["n"])
+        rows.append({
+            "PLAYER_ID": pid, "PLAYER_NAME": a["NAME"], "GP": a["n"],
+            "MIN": round(a["MIN"]/n, 1), "PTS": round(a["PTS"]/n, 1),
+            "REB": round(a["REB"]/n, 1), "AST": round(a["AST"]/n, 1),
+            "FG3M": round(a["FG3M"]/n, 1), "STL": round(a["STL"]/n, 1),
+            "BLK": round(a["BLK"]/n, 1), "TOV": round(a["TOV"]/n, 1),
+        })
     if not rows:
         return None
     return pd.DataFrame(rows)
