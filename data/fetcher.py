@@ -268,3 +268,53 @@ def fetch_essential(season: str | None = None) -> dict:
     }
     picture["fetch_errors"] = dict(getattr(sources, "LAST_ERRORS", {}))
     return picture
+
+
+# ── gist-cached data (the reliable primary — fed by the GitHub Action) ────────
+def _gist_id():
+    try:
+        import streamlit as st
+        return st.secrets.get("nba_gist_id", "")
+    except Exception:
+        return ""
+
+
+def fetch_from_gist() -> dict:
+    """Read the NBA data cached to a gist by the GitHub Action (scripts/
+    fetch_to_gist.py). This is the RELIABLE primary path: the Action fetches
+    nba.com from GitHub's IPs (which work) and caches here; the app just reads
+    this fast JSON. Returns picture dict or {} if not configured/available."""
+    import requests, json
+    import pandas as pd
+    gid = _gist_id()
+    if not gid:
+        return {}
+    try:
+        r = requests.get(f"https://api.github.com/gists/{gid}", timeout=15)
+        if r.status_code != 200:
+            return {}
+        files = r.json().get("files", {})
+        f = files.get("nba_data.json")
+        if not f:
+            return {}
+        # gist may truncate large files; if so, fetch raw_url
+        content = f.get("content")
+        if f.get("truncated") and f.get("raw_url"):
+            content = requests.get(f["raw_url"], timeout=15).text
+        data = json.loads(content)
+        picture = {
+            "season": data.get("season"),
+            "source": "gist (nba.com via GitHub Action)",
+            "fetched_at": data.get("fetched_at"),
+        }
+        off = data.get("offense") or []
+        opp = data.get("team_opponent") or []
+        picture["offense"] = pd.DataFrame(off) if off else None
+        picture["team_opponent"] = pd.DataFrame(opp) if opp else None
+        picture["fetched_ok"] = {
+            "offense": picture["offense"] is not None and not picture["offense"].empty,
+            "team_opponent": picture["team_opponent"] is not None and not picture["team_opponent"].empty,
+        }
+        return picture
+    except Exception as e:
+        return {"_error": f"{type(e).__name__}: {e}"}
