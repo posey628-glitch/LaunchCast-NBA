@@ -102,6 +102,21 @@ def fetch_hustle_stats(season: str | None = None):
     )
 
 
+def last_completed_season() -> str:
+    """The most recently COMPLETED season string. Used as a fallback when the
+    current season has no games yet (Aug/Sep), so the app always has data to show."""
+    import datetime
+    now = datetime.date.today()
+    # if we're before October, the current season year hasn't started; last
+    # completed is (year-1)-(year). If Oct+, last completed is the one that ended
+    # in June of this year.
+    if now.month >= 10:
+        ys = now.year - 1
+    else:
+        ys = now.year - 2
+    return f"{ys}-{str(ys + 1)[-2:]}"
+
+
 def assemble_full_picture(season: str | None = None) -> dict:
     """Pull EVERYTHING in one call, returning a dict of all frames. This is the
     comprehensive assembly your vision needs — offense, defense, matchup, context
@@ -121,7 +136,24 @@ def assemble_full_picture(season: str | None = None) -> dict:
         "matchups": fetch_player_matchups(season),
         "hustle": fetch_hustle_stats(season),
     }
+    # If the requested (current) season returned no player data — common in the
+    # preseason months — fall back to the last COMPLETED season so the app is
+    # usable year-round instead of blank until opening night.
+    if picture.get("offense") is None:
+        fb = last_completed_season()
+        if fb != season:
+            picture["season"] = fb
+            picture["season_note"] = f"{season} has no games yet; showing last completed season {fb}"
+            picture["offense"] = fetch_player_offense(fb)
+            picture["advanced"] = fetch_player_advanced(fb)
+            picture["team_defense"] = fetch_team_defense(fb)
+            picture["team_opponent"] = fetch_team_opponent(fb)
+            picture["def_vs_pos"] = fetch_defense_vs_position(fb)
+            picture["matchups"] = fetch_player_matchups(fb)
+            picture["hustle"] = fetch_hustle_stats(fb)
+
     picture["health"] = sources.source_health()
+    picture["fetch_errors"] = dict(getattr(sources, "LAST_ERRORS", {}))
     # summarize what we actually got, so failures are visible not silent
     picture["fetched_ok"] = {
         k: (v is not None and getattr(v, "empty", True) is False)
