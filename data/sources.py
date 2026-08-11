@@ -123,38 +123,39 @@ def fetch_balldontlie(path: str, params: dict | None = None, retries: int = 2):
     so a persistent 401 is fully diagnosable (without ever logging the key itself)."""
     import requests
     key = _balldontlie_key()
-    url = f"https://api.balldontlie.io/v1/{path.lstrip('/')}"
     if not key:
         LAST_ERRORS[f"balldontlie:{path}"] = "no key found in secrets"
         return None
-    # auth formats to try, in order
+    p = path.lstrip("/")
+    # balldontlie restructured into SPORT-NAMESPACED APIs. Try the new /nba/ path
+    # first, then the legacy path. (Account shows separate NBA/MLB/NFL plans, so
+    # the NBA key is valid only for the /nba/ namespace.)
+    base_urls = [
+        f"https://api.balldontlie.io/nba/v1/{p}",
+        f"https://api.balldontlie.io/v1/{p}",
+    ]
     auth_variants = [
         {"Authorization": key},
         {"Authorization": f"Bearer {key}"},
     ]
     last = None
-    for headers in auth_variants:
-        for attempt in range(retries):
+    for url in base_urls:
+        for headers in auth_variants:
             try:
                 _throttle()
                 r = requests.get(url, params=params or {}, headers=headers, timeout=15)
                 if r.status_code == 200:
                     LAST_ERRORS.pop(f"balldontlie:{path}", None)
                     return r.json()
-                # capture exact status + key length (NOT the key) for diagnosis
                 body = ""
                 try:
-                    body = r.text[:120]
+                    body = r.text[:100]
                 except Exception:
                     pass
-                last = (f"HTTP {r.status_code} (keylen={len(key)}, "
-                        f"auth='{list(headers.values())[0][:8]}...', body={body})")
-                if r.status_code == 401:
-                    break  # try the next auth format
+                last = (f"HTTP {r.status_code} @ {url.split('.io/')[1].split('/')[0]}"
+                        f"/ (keylen={len(key)}, body={body})")
             except Exception as e:
-                last = f"{type(e).__name__}: {str(e)[:100]}"
-                if attempt < retries - 1:
-                    time.sleep(0.8 * (attempt + 1))
+                last = f"{type(e).__name__}: {str(e)[:80]}"
                 continue
     LAST_ERRORS[f"balldontlie:{path}"] = last or "unknown"
     return None
